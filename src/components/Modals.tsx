@@ -9,11 +9,9 @@ import {
   DEPARTMENTS,
   ORDER_STATUS,
   ORDER_TYPES,
-  roleLabel,
   todayIso,
   type Asset,
   type Person,
-  type Role,
   type ServiceOrder,
 } from '../data'
 
@@ -382,66 +380,6 @@ function OrderForm({ order, assetId, onClose }: { order?: ServiceOrder; assetId?
 }
 
 // ---------------------------------------------------------------------------
-// Usuário do sistema (apenas administradores)
-// ---------------------------------------------------------------------------
-
-function UserForm({ onClose }: { onClose: () => void }) {
-  const [f, setF] = useState({ name: '', email: '', role: 'tecnico' as Role, department: '', jobTitle: '', password: '' })
-  const { saving, error, submit } = useSubmit(onClose)
-  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value })
-
-  return (
-    <Modal title="Novo usuário do sistema" eyebrow="Acesso" onClose={onClose}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          submit(() => api('/users', { method: 'POST', body: f }), 'Usuário criado')
-        }}
-      >
-        <div className="form-grid">
-          <Field label="Nome *">
-            <div className="input">
-              <input value={f.name} onChange={set('name')} required autoFocus />
-            </div>
-          </Field>
-          <Field label="E-mail de acesso *">
-            <div className="input">
-              <input type="email" value={f.email} onChange={set('email')} required />
-            </div>
-          </Field>
-          <Field label="Perfil *">
-            <select className="input" value={f.role} onChange={set('role')}>
-              {(Object.keys(roleLabel) as Role[]).map((r) => (
-                <option key={r} value={r}>
-                  {roleLabel[r]}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Senha inicial *" hint="Mínimo de 8 caracteres. Peça para a pessoa trocar no primeiro acesso.">
-            <div className="input">
-              <input type="text" value={f.password} onChange={set('password')} minLength={8} required autoComplete="new-password" />
-            </div>
-          </Field>
-          <Field label="Departamento">
-            <div className="input">
-              <input value={f.department} onChange={set('department')} />
-            </div>
-          </Field>
-          <Field label="Cargo">
-            <div className="input">
-              <input value={f.jobTitle} onChange={set('jobTitle')} />
-            </div>
-          </Field>
-        </div>
-        <FormError error={error} />
-        <FormActions saving={saving} onCancel={onClose} label="Criar usuário" />
-      </form>
-    </Modal>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Confirmação de exclusão
 // ---------------------------------------------------------------------------
 
@@ -481,14 +419,12 @@ type Open =
   | { kind: 'asset'; asset?: Asset }
   | { kind: 'person'; person?: Person }
   | { kind: 'order'; order?: ServiceOrder; assetId?: number }
-  | { kind: 'user' }
   | { kind: 'confirm'; opts: ConfirmOptions }
 
 interface ModalsApi {
   openAsset: (asset?: Asset) => void
   openPerson: (person?: Person) => void
   openOrder: (order?: ServiceOrder, assetId?: number) => void
-  openUser: () => void
   confirm: (opts: ConfirmOptions) => void
 }
 
@@ -501,7 +437,6 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
     openAsset: (asset) => setOpen({ kind: 'asset', asset }),
     openPerson: (person) => setOpen({ kind: 'person', person }),
     openOrder: (order, assetId) => setOpen({ kind: 'order', order, assetId }),
-    openUser: () => setOpen({ kind: 'user' }),
     confirm: (opts) => setOpen({ kind: 'confirm', opts }),
   }
   return (
@@ -510,7 +445,6 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
       {open?.kind === 'asset' && <AssetForm asset={open.asset} onClose={close} />}
       {open?.kind === 'person' && <PersonForm person={open.person} onClose={close} />}
       {open?.kind === 'order' && <OrderForm order={open.order} assetId={open.assetId} onClose={close} />}
-      {open?.kind === 'user' && <UserForm onClose={close} />}
       {open?.kind === 'confirm' && <ConfirmDialog opts={open.opts} onClose={close} />}
     </ModalsContext.Provider>
   )

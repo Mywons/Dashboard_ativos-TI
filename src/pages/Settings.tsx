@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from 'react'
-import { Check, KeyRound, TriangleAlert, UserPlus, X } from 'lucide-react'
+import { Check, RotateCcw, TriangleAlert, X } from 'lucide-react'
 import { api } from '../api'
-import { fmtDate, roleLabel, type Role, type User } from '../data'
-import { useAuth, useData, useResource } from '../store'
+import { roleLabel, type Role, type User } from '../data'
+import { handle, resetDemo } from '../mock'
+import { useAuth, useData } from '../store'
 import { useModals } from '../components/Modals'
-import { Avatar, Badge, PageHead, RowActions } from '../components/ui'
+import { Avatar, Badge, PageHead } from '../components/ui'
 
 const fields = [
   { label: 'Nome completo', key: 'name' },
@@ -19,7 +20,6 @@ const permissions: { label: string; roles: Role[] }[] = [
   { label: 'Cadastrar, editar e excluir ativos', roles: ['admin', 'tecnico'] },
   { label: 'Gerenciar pessoas e responsáveis', roles: ['admin', 'tecnico'] },
   { label: 'Abrir e encerrar ordens de serviço', roles: ['admin', 'tecnico'] },
-  { label: 'Criar usuários e definir perfis de acesso', roles: ['admin'] },
   { label: 'Configurar integrações', roles: ['admin'] },
 ]
 
@@ -88,189 +88,46 @@ function ProfileCard() {
   )
 }
 
-function PasswordCard() {
-  const { user } = useAuth()
-  const { toast } = useData()
-  const [open, setOpen] = useState(false)
-  const [f, setF] = useState({ current: '', next: '', confirm: '' })
-  const [err, setErr] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (f.next !== f.confirm) return setErr('A confirmação não confere com a nova senha')
-    setBusy(true)
-    setErr(null)
-    try {
-      await api('/me/password', { method: 'POST', body: { current: f.current, next: f.next } })
-      toast('Senha alterada. Outras sessões foram encerradas.')
-      setF({ current: '', next: '', confirm: '' })
-      setOpen(false)
-    } catch (e) {
-      setErr((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
+function DemoCard() {
+  const { setUser } = useAuth()
+  const { confirm } = useModals()
   return (
     <div className="card">
       <div className="card-head">
-        <h3>Segurança da conta</h3>
+        <div>
+          <h3>Dados da demonstração</h3>
+          <span className="muted small">Tudo fica salvo apenas neste navegador, sem servidor nem banco de dados.</span>
+        </div>
       </div>
       <div className="setting-row">
         <div>
-          <strong>Senha de acesso</strong>
-          <span>Alterada em {fmtDate(user!.passwordChangedAt)}</span>
+          <strong>Restaurar dados de exemplo</strong>
+          <span>Apaga suas alterações e volta ao inventário inicial</span>
         </div>
-        {!open && (
-          <button className="btn btn-sm" onClick={() => setOpen(true)}>
-            <KeyRound size={13} /> Alterar senha
-          </button>
-        )}
-      </div>
-      {open && (
-        <form onSubmit={submit} style={{ paddingTop: 12 }}>
-          <div className="form-grid">
-            <div className="field" style={{ gridColumn: '1 / -1' }}>
-              <label htmlFor="pw-current">Senha atual</label>
-              <div className="input">
-                <input id="pw-current" type="password" value={f.current} onChange={(e) => setF({ ...f, current: e.target.value })} required autoComplete="current-password" />
-              </div>
-            </div>
-            <div className="field">
-              <label htmlFor="pw-next">Nova senha (mín. 8)</label>
-              <div className="input">
-                <input id="pw-next" type="password" value={f.next} onChange={(e) => setF({ ...f, next: e.target.value })} minLength={8} required autoComplete="new-password" />
-              </div>
-            </div>
-            <div className="field">
-              <label htmlFor="pw-confirm">Confirmar nova senha</label>
-              <div className="input">
-                <input id="pw-confirm" type="password" value={f.confirm} onChange={(e) => setF({ ...f, confirm: e.target.value })} minLength={8} required autoComplete="new-password" />
-              </div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button type="submit" className="btn btn-primary" disabled={busy}>
-              {busy ? 'Salvando…' : 'Salvar nova senha'}
-            </button>
-            <button type="button" className="btn" onClick={() => setOpen(false)}>
-              Cancelar
-            </button>
-            {err && <Msg ok={false} text={err} />}
-          </div>
-        </form>
-      )}
-      <p className="muted small" style={{ margin: '10px 0 0' }}>
-        Último acesso: {user!.lastLoginAt ? `${fmtDate(user!.lastLoginAt)} às ${user!.lastLoginAt.slice(11, 16)} (UTC)` : '—'}
-      </p>
-    </div>
-  )
-}
-
-function UsersCard() {
-  const { user: me } = useAuth()
-  const { mutate, toast } = useData()
-  const { openUser, confirm } = useModals()
-  const { data: users } = useResource<User[]>('/users')
-  const [resetFor, setResetFor] = useState<number | null>(null)
-  const [newPw, setNewPw] = useState('')
-
-  const changeRole = (u: User, role: Role) =>
-    mutate(() => api(`/users/${u.id}`, { method: 'PATCH', body: { role } }), `Perfil de ${u.name} atualizado`).catch((e: Error) => toast(e.message, 'error'))
-
-  const resetPassword = (u: User) =>
-    mutate(() => api(`/users/${u.id}`, { method: 'PATCH', body: { password: newPw } }), `Senha de ${u.name} redefinida`)
-      .then(() => {
-        setResetFor(null)
-        setNewPw('')
-      })
-      .catch((e: Error) => toast(e.message, 'error'))
-
-  return (
-    <div className="card">
-      <div className="card-head">
-        <div>
-          <h3>Usuários do sistema</h3>
-          <span className="muted small">O cadastro de acesso é feito pelo administrador</span>
-        </div>
-        <button className="btn btn-sm btn-dark" onClick={openUser}>
-          <UserPlus size={13} /> Novo
+        <button
+          className="btn btn-sm"
+          onClick={() =>
+            confirm({
+              title: 'Restaurar dados de exemplo',
+              message: 'Todos os ativos, pessoas e ordens de serviço que você criou ou alterou serão substituídos pelos dados de exemplo.',
+              confirmLabel: 'Restaurar',
+              success: 'Dados de exemplo restaurados',
+              action: async () => {
+                resetDemo()
+                setUser((handle('GET', '/me') as { user: User }).user)
+              },
+            })
+          }
+        >
+          <RotateCcw size={13} /> Restaurar
         </button>
-      </div>
-      <div className="user-list">
-        {users?.map((u) => (
-          <div key={u.id} className="user-row">
-            <div className="user-main">
-              <Avatar name={u.name} />
-              <div style={{ minWidth: 0 }}>
-                <strong>
-                  {u.name} {u.id === me?.id && <span className="muted small">(você)</span>}
-                </strong>
-                <small>{u.email}</small>
-              </div>
-            </div>
-            <div className="user-controls">
-              <select className="select" value={u.role} onChange={(e) => changeRole(u, e.target.value as Role)} aria-label={`Perfil de ${u.name}`}>
-                {(Object.keys(roleLabel) as Role[]).map((r) => (
-                  <option key={r} value={r}>
-                    {roleLabel[r]}
-                  </option>
-                ))}
-              </select>
-              <RowActions
-                extra={
-                  <button className="icon-btn" onClick={() => setResetFor(resetFor === u.id ? null : u.id)} aria-label="Redefinir senha" title="Redefinir senha">
-                    <KeyRound size={14} />
-                  </button>
-                }
-                onDelete={
-                  u.id === me?.id
-                    ? undefined
-                    : () =>
-                        confirm({
-                          title: 'Excluir usuário',
-                          message: (
-                            <>
-                              Remover o acesso de <b>{u.name}</b> ({u.email})?
-                            </>
-                          ),
-                          success: 'Usuário excluído',
-                          action: () => api(`/users/${u.id}`, { method: 'DELETE' }),
-                        })
-                }
-              />
-            </div>
-            {resetFor === u.id && (
-              <form
-                className="user-reset"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  resetPassword(u)
-                }}
-              >
-                <div className="input">
-                  <input placeholder="Nova senha (mín. 8)" value={newPw} onChange={(e) => setNewPw(e.target.value)} minLength={8} required autoFocus />
-                </div>
-                <button className="btn btn-sm btn-primary" type="submit">
-                  Redefinir
-                </button>
-                <button className="icon-btn" type="button" onClick={() => setResetFor(null)} aria-label="Cancelar">
-                  <X size={14} />
-                </button>
-              </form>
-            )}
-          </div>
-        ))}
       </div>
     </div>
   )
 }
 
 export function Settings() {
-  const { user, isAdmin } = useAuth()
-  if (!user) return null
+  const { user } = useAuth()
 
   return (
     <>
@@ -290,12 +147,11 @@ export function Settings() {
               </span>
             </div>
           </div>
-          <ProfileCard key={user.id} />
-          <PasswordCard />
+          <ProfileCard key={JSON.stringify(user)} />
         </div>
 
         <div className="stack">
-          {isAdmin && <UsersCard />}
+          <DemoCard />
           <div className="card">
             <div className="card-head">
               <div>

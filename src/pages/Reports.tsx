@@ -17,6 +17,7 @@ import {
   type ServiceOrder,
 } from '../data'
 import { useResource } from '../store'
+import { downloadCsv, downloadInventory } from '../csv'
 import { Badge, Kpi, Meter, PageHead, TableMessage } from '../components/ui'
 
 function BarTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number; payload: { value: number } }[]; label?: string }) {
@@ -26,21 +27,6 @@ function BarTooltip({ active, payload, label }: { active?: boolean; payload?: { 
       {label}: <b>{payload[0].value} ativo(s)</b> · {fmtMoney(payload[0].payload.value)}
     </div>
   )
-}
-
-/** Gera e baixa um CSV (separado por ; para abrir direto no Excel em pt-BR). */
-function downloadCsv(filename: string, head: string[], rows: (string | number | null)[][]) {
-  const esc = (v: string | number | null) => {
-    const s = v === null || v === undefined ? '' : typeof v === 'number' ? String(v).replace('.', ',') : v
-    return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-  }
-  const csv = '﻿' + [head, ...rows].map((r) => r.map(esc).join(';')).join('\r\n')
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
 }
 
 const ageYears = (a: Asset) => (Date.now() - Date.parse(a.acquiredAt)) / (365.25 * 86400000)
@@ -145,9 +131,9 @@ export function Reports() {
         eyebrow="Inteligência do parque"
         title="Relatórios de ativos"
         actions={
-          <a className="btn btn-dark" href="/api/export/assets.csv" download>
+          <button className="btn btn-dark" onClick={downloadInventory}>
             <Download size={14} /> Exportar inventário completo
-          </a>
+          </button>
         }
       />
 

@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Lightbulb,
   LayoutGrid,
-  LogOut,
   Menu,
   Monitor,
   Plug,
@@ -43,7 +42,7 @@ const tips: Partial<Record<Route, string>> = {
   people: 'Ao excluir uma pessoa, os ativos dela voltam para o estoque.',
   maintenance: 'Ao abrir uma OS o ativo entra em manutenção; ao concluir, ele volta ao status anterior.',
   reports: 'Exporte o inventário completo em CSV para abrir no Excel.',
-  settings: 'Troque a senha padrão do administrador no primeiro acesso.',
+  settings: 'Os dados ficam salvos neste navegador. Use "Restaurar dados" para voltar ao exemplo.',
 }
 
 export function BrandMark({ size = 18 }: { size?: number }) {
@@ -57,12 +56,10 @@ export function BrandMark({ size = 18 }: { size?: number }) {
 function Sidebar({
   route,
   onNavigate,
-  onLogout,
   open,
 }: {
   route: Route
   onNavigate: (r: Route) => void
-  onLogout: () => void
   open: boolean
 }) {
   const { user } = useAuth()
@@ -99,14 +96,11 @@ function Sidebar({
         {tips[route] ?? tips.overview}
       </div>
       <div className="sidebar-user">
-        <Avatar name={user?.name ?? '?'} />
+        <Avatar name={user.name} />
         <div className="who">
-          <strong>{user?.name}</strong>
-          <span>{user ? roleLabel[user.role] : ''}</span>
+          <strong>{user.name}</strong>
+          <span>{roleLabel[user.role]} · demonstração</span>
         </div>
-        <button className="icon-ghost" onClick={onLogout} aria-label="Sair">
-          <LogOut size={16} />
-        </button>
       </div>
     </aside>
   )
@@ -151,7 +145,6 @@ function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: (q: string
 export function Layout({
   route,
   onNavigate,
-  onLogout,
   onSearch,
   menuOpen,
   setMenuOpen,
@@ -159,23 +152,16 @@ export function Layout({
 }: {
   route: Route
   onNavigate: (r: Route) => void
-  onLogout: () => void
   onSearch: (q: string) => void
   menuOpen: boolean
   setMenuOpen: (v: boolean) => void
   children: ReactNode
 }) {
-  const { demo } = useAuth()
   return (
     <div className="app">
-      <Sidebar route={route} onNavigate={onNavigate} onLogout={onLogout} open={menuOpen} />
+      <Sidebar route={route} onNavigate={onNavigate} open={menuOpen} />
       <div className="main" onClick={() => menuOpen && setMenuOpen(false)}>
         <Topbar onMenu={() => setMenuOpen(true)} onSearch={onSearch} />
-        {demo && (
-          <div className="demo-banner" role="note">
-            <strong>Modo demonstração:</strong> este servidor ainda não tem banco de dados conectado, então as alterações podem ser apagadas a qualquer momento.
-          </div>
-        )}
         <main className="content">{children}</main>
       </div>
     </div>

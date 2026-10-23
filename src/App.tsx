@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Layout, type Route } from './components/Layout'
 import { ModalsProvider } from './components/Modals'
-import { AuthProvider, DataProvider, useAuth } from './store'
-import { Login } from './pages/Login'
+import { AuthProvider, DataProvider } from './store'
 import { Overview } from './pages/Overview'
 import { Inventory } from './pages/Inventory'
 import { People } from './pages/People'
@@ -23,7 +22,6 @@ function readHash(): { route: Route; params: URLSearchParams } {
 }
 
 function Shell() {
-  const { user, loading, logout } = useAuth()
   const [{ route, params }, setLoc] = useState(readHash)
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -42,18 +40,11 @@ function Shell() {
     window.location.hash = `/${r}${qs ? `?${qs}` : ''}`
   }
 
-  if (loading) return <div className="boot">Carregando…</div>
-  if (!user) return <Login />
-
   return (
     <ModalsProvider>
       <Layout
         route={route}
         onNavigate={(r) => go(r)}
-        onLogout={() => {
-          window.location.hash = '/overview'
-          logout()
-        }}
         onSearch={(q) => go('inventory', q ? { q } : undefined)}
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}

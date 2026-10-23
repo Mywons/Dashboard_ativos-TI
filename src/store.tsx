@@ -1,67 +1,24 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { api, setUnauthorizedHandler } from './api'
+import { api } from './api'
+import { handle } from './mock'
 import type { User } from './data'
 
 // ---------------------------------------------------------------------------
-// Sessão
+// Usuário da demonstração (sem login: sempre o administrador de exemplo)
 // ---------------------------------------------------------------------------
 
 interface AuthState {
-  user: User | null
-  /** Servidor sem banco persistente (demonstração na Vercel). */
-  demo: boolean
-  loading: boolean
+  user: User
   canWrite: boolean
   isAdmin: boolean
-  login: (email: string, password: string, remember: boolean) => Promise<void>
-  logout: () => Promise<void>
   setUser: (u: User) => void
 }
 
 const AuthContext = createContext<AuthState | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [demo, setDemo] = useState(false)
-
-  useEffect(() => {
-    setUnauthorizedHandler(() => setUser(null))
-    api<{ demo: boolean }>('/health')
-      .then((r) => setDemo(r.demo))
-      .catch(() => {})
-    api<{ user: User }>('/auth/me')
-      .then((r) => setUser(r.user))
-      .catch(() => setUser(null))
-      .finally(() => setLoading(false))
-  }, [])
-
-  const login = useCallback(async (email: string, password: string, remember: boolean) => {
-    const r = await api<{ user: User }>('/auth/login', { method: 'POST', body: { email, password, remember } })
-    setUser(r.user)
-  }, [])
-
-  const logout = useCallback(async () => {
-    await api('/auth/logout', { method: 'POST' }).catch(() => {})
-    setUser(null)
-  }, [])
-
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        demo,
-        loading,
-        canWrite: user?.role === 'admin' || user?.role === 'tecnico',
-        isAdmin: user?.role === 'admin',
-        login,
-        logout,
-        setUser,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  )
+  const [user, setUser] = useState<User>(() => (handle('GET', '/me') as { user: User }).user)
+  return <AuthContext.Provider value={{ user, canWrite: true, isAdmin: true, setUser }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {

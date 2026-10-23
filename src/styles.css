@@ -693,62 +693,6 @@ table.data tbody tr.hl { background: var(--lime-soft); }
 .cta-blue .badge { color: var(--ink); }
 
 /* ==========================================================
-   Login
-   ========================================================== */
-.login { display: grid; grid-template-columns: 1fr 1fr; min-height: 100vh; }
-.login-hero {
-  background: var(--blue); color: #fff;
-  padding: 36px 48px;
-  display: flex; flex-direction: column;
-  position: relative; overflow: hidden;
-}
-.login-hero::before {
-  content: ''; position: absolute; width: 200px; height: 200px; top: -80px; right: -60px;
-  border-radius: 50%; background: rgba(255, 255, 255, 0.14);
-}
-.login-hero::after {
-  content: ''; position: absolute; width: 200px; height: 200px; bottom: -60px; left: -110px;
-  border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.2);
-}
-.login-hero h1 { font-size: 46px; line-height: 1.05; margin: 12px 0 14px; }
-.login-hero > div > .eyebrow { color: rgba(255, 255, 255, 0.75); }
-.login-hero p { opacity: 0.8; max-width: 420px; margin: 0; }
-.login-preview {
-  background: #fff; color: var(--ink);
-  border: var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 6px 6px 0 var(--ink);
-  padding: 16px;
-  margin-top: auto;
-  max-width: 520px;
-  position: relative; z-index: 1;
-}
-.login-preview .kpis { grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 12px 0; }
-.login-preview .kpi { min-height: 96px; box-shadow: var(--shadow-sm); padding: 12px; }
-.login-preview .kpi-value { font-size: 24px; }
-.login-preview .callout-dark { margin: 0; }
-.login-hero-foot { display: flex; justify-content: space-between; font-size: 11px; opacity: 0.7; margin-top: 28px; position: relative; z-index: 1; }
-
-.login-form-side { background: var(--bg); display: flex; flex-direction: column; padding: 28px 48px; }
-.login-top { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
-.login-form { width: 100%; max-width: 420px; margin: auto; display: flex; flex-direction: column; gap: 16px; }
-.login-form h2 { font-size: 34px; }
-.login-form .check { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 500; }
-.login-form .check input { accent-color: var(--ink); width: 16px; height: 16px; }
-.login-row { display: flex; justify-content: space-between; align-items: center; }
-.login-row a { font-size: 12px; font-weight: 600; color: var(--blue); }
-.btn-login { padding: 13px 16px; font-size: 14px; box-shadow: var(--shadow); }
-.login-help {
-  display: flex; align-items: center; gap: 10px;
-  background: var(--surface);
-  border-radius: 12px;
-  padding: 10px 12px;
-  font-size: 12px;
-  color: var(--ink-2);
-}
-.login-foot { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-3); }
-
-/* ==========================================================
    Responsivo
    ========================================================== */
 .menu-btn { display: none; }
@@ -771,8 +715,6 @@ table.data tbody tr.hl { background: var(--lime-soft); }
   .menu-btn { display: grid; }
   .kpis { grid-template-columns: repeat(2, 1fr); }
   .grid-2, .grid-settings { grid-template-columns: 1fr; }
-  .login { grid-template-columns: 1fr; }
-  .login-hero { display: none; }
 }
 @media (max-width: 640px) {
   .content { padding: 20px 16px 40px; }
@@ -790,7 +732,6 @@ table.data tbody tr.hl { background: var(--lime-soft); }
   .filterbar { border-radius: var(--radius); }
   .promo { grid-template-columns: 1fr; }
   .promo-art { display: none; }
-  .login-form-side { padding: 20px 16px; }
 }
 
 /* ==========================================================
@@ -859,7 +800,6 @@ textarea.input { resize: vertical; font-family: inherit; }
 }
 .toast.error { background: var(--red); box-shadow: 4px 4px 0 var(--ink); }
 
-.boot { min-height: 100vh; display: grid; place-items: center; color: var(--ink-3); }
 .bell { color: var(--ink); }
 
 .user-list { display: flex; flex-direction: column; }
@@ -884,10 +824,3 @@ textarea.input { resize: vertical; font-family: inherit; }
 table.data thead th, table.data tbody td { padding-left: 12px; padding-right: 12px; }
 table.data thead th:first-child, table.data tbody td:first-child { padding-left: 16px; }
 table.data tbody td:last-child { width: 1%; padding-right: 16px; }
-.demo-banner {
-  background: var(--yellow);
-  border-bottom: var(--border);
-  padding: 8px 32px;
-  font-size: 12px;
-}
-@media (max-width: 640px) { .demo-banner { padding: 8px 16px; } }

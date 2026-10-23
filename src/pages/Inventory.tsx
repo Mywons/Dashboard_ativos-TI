@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { CircleCheck, Download, Package, Plus, Search, Sparkles, Wrench } from 'lucide-react'
 import { api } from '../api'
+import { downloadInventory } from '../csv'
 import { ASSET_STATUS, categoryThumb, fmtDate, fmtInt, fmtMoney, statusBadge, type Asset, type Stats } from '../data'
 import { useAuth, useResource } from '../store'
 import { useModals } from '../components/Modals'
@@ -59,9 +60,9 @@ export function Inventory({ params }: { params: URLSearchParams }) {
         title="Inventário de Ativos"
         actions={
           <>
-            <a className="btn" href="/api/export/assets.csv" download>
+            <button className="btn" onClick={downloadInventory}>
               <Download size={14} /> Exportar CSV
-            </a>
+            </button>
             {canWrite && (
               <button className="btn btn-primary" onClick={() => openAsset()}>
                 <Plus size={14} /> Cadastrar ativo
