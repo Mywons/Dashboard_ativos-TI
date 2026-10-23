@@ -78,6 +78,8 @@ O projeto já vem pronto para a Vercel: o front é publicado como site estático
 3. Defina `SESSION_SECRET` (texto aleatório longo) e `ADMIN_PASSWORD` (senha inicial do administrador).
 4. Faça um novo deploy. Na primeira requisição as tabelas e os dados iniciais são criados.
 
-Sem banco conectado o sistema funciona em **modo demonstração** (Postgres em memória): aparece um aviso amarelo e os dados se perdem quando a função reinicia.
+**Sem Postgres, com Vercel Blob:** se o projeto tiver um Blob store conectado (variável `BLOB_READ_WRITE_TOKEN`), os dados ficam salvos no Blob como JSON. Cada instância carrega esses dados num Postgres em memória e grava de volta a cada alteração, com controle de concorrência (ETag). Serve bem para equipes pequenas; para muito uso simultâneo, prefira o Neon.
+
+Sem banco nem Blob o sistema funciona em **modo demonstração** (Postgres em memória): aparece um aviso amarelo e os dados se perdem quando a função reinicia.
 
 Também roda em qualquer servidor Node (`npm run build && npm start`), com ou sem `DATABASE_URL`.

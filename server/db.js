@@ -7,7 +7,10 @@ import { hashPassword } from './auth.js'
  *   memória e serve só como demonstração (os dados se perdem quando a função reinicia).
  */
 const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL
-export const demoMode = !DATABASE_URL && Boolean(process.env.VERCEL)
+/** Sem Postgres externo, mas com Vercel Blob: os dados ficam salvos no Blob (ver blobSync/blobSave). */
+export const blobMode = !DATABASE_URL && Boolean(process.env.BLOB_READ_WRITE_TOKEN)
+/** Na Vercel sem banco nenhum: dados só em memória. */
+export const demoMode = !DATABASE_URL && !blobMode && Boolean(process.env.VERCEL)
 
 let driver // { query(sql, params) → rows, tx(fn) }
 
@@ -38,7 +41,7 @@ async function connect() {
     }
   }
   const { PGlite } = await import('@electric-sql/pglite')
-  const dir = process.env.VERCEL ? undefined : process.env.PGLITE_DIR || 'data/pglite'
+  const dir = process.env.VERCEL || blobMode ? undefined : process.env.PGLITE_DIR || 'data/pglite'
   const db = new PGlite(dir)
   return {
     query: async (sql, params) => (await db.query(sql, params)).rows,
@@ -251,6 +254,105 @@ async function seed(run) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Persistência no Vercel Blob
+// Cada instância serverless tem um Postgres em memória (PGlite). Os dados ficam
+// num JSON no Blob: toda escrita salva o JSON (com controle de concorrência por
+// ETag) e as instâncias recarregam quando percebem uma versão mais nova.
+// ---------------------------------------------------------------------------
+
+const SNAPSHOT = 'glti/database.json'
+const TABLES = ['users', 'people', 'assets', 'service_orders', 'settings']
+// BLOB_MODULE permite trocar a biblioteca nos testes locais
+const blobLib = () => import(process.env.BLOB_MODULE || '@vercel/blob')
+let snapshotEtag = null
+let lastCheck = 0
+
+export class ConflictError extends Error {}
+
+async function readSnapshot(run) {
+  const data = { version: 1, savedAt: new Date().toISOString() }
+  for (const t of TABLES) data[t] = await run(`SELECT * FROM ${t} ORDER BY 1`)
+  return data
+}
+
+async function restoreSnapshot(run, data) {
+  await run(`TRUNCATE ${[...TABLES].reverse().join(', ')} RESTART IDENTITY CASCADE`)
+  for (const t of TABLES) {
+    for (const row of data[t] ?? []) {
+      const cols = Object.keys(row)
+      await run(`INSERT INTO ${t} (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})`, cols.map((c) => row[c]))
+    }
+    if (t !== 'settings') {
+      await run(`SELECT setval(pg_get_serial_sequence('${t}', 'id'), COALESCE((SELECT MAX(id) FROM ${t}), 1), (SELECT MAX(id) FROM ${t}) IS NOT NULL)`)
+    }
+  }
+}
+
+/**
+ * Recarrega os dados do Blob se houver versão mais nova que a desta instância.
+ * Sem `force`, consulta o Blob no máximo a cada 3 s. Devolve true se existir snapshot.
+ */
+export async function blobSync({ force = false } = {}) {
+  if (!blobMode) return false
+  if (!force && Date.now() - lastCheck < 3000) return true
+  const { head, get, BlobNotFoundError } = await blobLib()
+  let meta
+  try {
+    meta = await head(SNAPSHOT)
+  } catch (e) {
+    if (e instanceof BlobNotFoundError) return false
+    throw e
+  }
+  lastCheck = Date.now()
+  if (meta.etag === snapshotEtag) return true
+  const res = await get(SNAPSHOT, { access: 'private', useCache: false })
+  if (!res) return false
+  const data = await new Response(res.stream).json()
+  await tx((run) => restoreSnapshot(run, data))
+  snapshotEtag = res.blob.etag
+  return true
+}
+
+/** Salva os dados no Blob. Lança ConflictError se outra instância salvou antes. */
+export async function blobSave() {
+  if (!blobMode) return
+  const { put, BlobPreconditionFailedError } = await blobLib()
+  const body = JSON.stringify(await readSnapshot(q))
+  try {
+    const r = await put(SNAPSHOT, body, {
+      access: 'private',
+      contentType: 'application/json',
+      addRandomSuffix: false,
+      cacheControlMaxAge: 60,
+      ...(snapshotEtag ? { ifMatch: snapshotEtag } : { allowOverwrite: false }),
+    })
+    snapshotEtag = r.etag
+    lastCheck = Date.now()
+  } catch (e) {
+    if (e instanceof BlobPreconditionFailedError || /already exists/i.test(e?.message)) throw new ConflictError('conflito')
+    throw e
+  }
+}
+
+/** Fila simples: uma escrita por vez nesta instância. */
+let chain = Promise.resolve()
+export function acquireLock() {
+  let release
+  const next = new Promise((r) => (release = r))
+  const ready = chain.then(() => {
+    let done = false
+    return () => {
+      if (!done) {
+        done = true
+        release()
+      }
+    }
+  })
+  chain = chain.then(() => next)
+  return ready
+}
+
 let ready
 /** Conecta, cria as tabelas e os dados iniciais (uma vez por processo). */
 export function init() {
@@ -260,8 +362,18 @@ export function init() {
       // Evita que duas funções frias criem o banco ao mesmo tempo
       if (DATABASE_URL) await run('SELECT pg_advisory_xact_lock(724001)')
       for (const stmt of SCHEMA.split(';').map((s) => s.trim()).filter(Boolean)) await run(stmt)
-      await seed(run)
+      if (!blobMode) await seed(run)
     })
+    if (blobMode && !(await blobSync({ force: true }))) {
+      // Primeira execução: cria os dados iniciais e publica no Blob
+      await tx((run) => seed(run))
+      try {
+        await blobSave()
+      } catch (e) {
+        if (!(e instanceof ConflictError)) throw e
+        await blobSync({ force: true }) // outra instância criou primeiro: usa a dela
+      }
+    }
   })().catch((e) => {
     ready = undefined
     throw e

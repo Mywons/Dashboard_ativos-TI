@@ -1,5 +1,5 @@
 import express from 'express'
-import { demoMode, init, NOW, one, q, tx } from './db.js'
+import { acquireLock, blobMode, blobSave, blobSync, ConflictError, demoMode, init, NOW, one, q, tx } from './db.js'
 import { clearFails, createToken, hashPassword, loginBlocked, parseCookies, randomSecret, readToken, registerFail, verifyPassword } from './auth.js'
 
 export const app = express()
@@ -112,6 +112,57 @@ app.use('/api', async (_req, _res, next) => {
   } catch (e) {
     next(e)
   }
+})
+
+// Modo Blob: leituras recarregam os dados se outra instância salvou algo novo;
+// escritas rodam uma por vez e só respondem depois de salvar no Blob.
+app.use('/api', async (req, res, next) => {
+  if (!blobMode) return next()
+  const isWrite = !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !/^\/auth\/(login|logout)$/.test(req.path)
+  const release = await acquireLock()
+  if (!isWrite) {
+    try {
+      await blobSync({ force: req.headers['x-fresh'] === '1' })
+    } catch (e) {
+      console.error('Falha ao sincronizar com o Blob:', e)
+    } finally {
+      release()
+    }
+    return next()
+  }
+  try {
+    await blobSync({ force: true })
+  } catch (e) {
+    release()
+    return next(e)
+  }
+  res.on('close', release)
+  const send = res.json.bind(res)
+  let finished = false
+  res.json = (body) => {
+    if (finished) return send(body)
+    finished = true
+    ;(async () => {
+      if (res.statusCode < 400) {
+        try {
+          await blobSave()
+        } catch (e) {
+          await blobSync({ force: true }).catch(() => {})
+          release()
+          if (e instanceof ConflictError) {
+            res.setHeader('X-Conflict', '1')
+            return res.status(409) && send({ error: 'Outra pessoa alterou os dados ao mesmo tempo. Tente de novo.' })
+          }
+          console.error('Falha ao salvar no Blob:', e)
+          return res.status(503) && send({ error: 'Não foi possível salvar agora. Tente de novo em instantes.' })
+        }
+      }
+      release()
+      send(body)
+    })()
+    return res
+  }
+  next()
 })
 
 function setSessionCookie(req, res, token, maxAgeSec) {
