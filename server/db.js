@@ -1,20 +1,66 @@
-import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
 import { hashPassword } from './auth.js'
 
-const DB_PATH = process.env.DB_PATH || 'data/ativos.db'
+/**
+ * Banco Postgres.
+ * - Com DATABASE_URL (ou POSTGRES_URL, criada pela integração Neon da Vercel): Postgres de verdade.
+ * - Sem ela: PGlite (Postgres embutido). Localmente grava em data/pglite; na Vercel roda em
+ *   memória e serve só como demonstração (os dados se perdem quando a função reinicia).
+ */
+const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL
+export const demoMode = !DATABASE_URL && Boolean(process.env.VERCEL)
 
-if (DB_PATH !== ':memory:') mkdirSync(dirname(DB_PATH), { recursive: true })
+let driver // { query(sql, params) → rows, tx(fn) }
 
-export const db = new DatabaseSync(DB_PATH)
-db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;')
+async function connect() {
+  if (DATABASE_URL) {
+    const { default: pg } = await import('pg')
+    const pool = new pg.Pool({
+      connectionString: DATABASE_URL,
+      max: 5,
+      ssl: /localhost|127\.0\.0\.1/.test(DATABASE_URL) ? false : { rejectUnauthorized: false },
+    })
+    return {
+      query: async (sql, params) => (await pool.query(sql, params)).rows,
+      tx: async (fn) => {
+        const client = await pool.connect()
+        try {
+          await client.query('BEGIN')
+          const out = await fn(async (sql, params) => (await client.query(sql, params)).rows)
+          await client.query('COMMIT')
+          return out
+        } catch (e) {
+          await client.query('ROLLBACK')
+          throw e
+        } finally {
+          client.release()
+        }
+      },
+    }
+  }
+  const { PGlite } = await import('@electric-sql/pglite')
+  const dir = process.env.VERCEL ? undefined : process.env.PGLITE_DIR || 'data/pglite'
+  const db = new PGlite(dir)
+  return {
+    query: async (sql, params) => (await db.query(sql, params)).rows,
+    tx: (fn) => db.transaction((t) => fn(async (sql, params) => (await t.query(sql, params)).rows)),
+  }
+}
 
-db.exec(`
+/** Executa uma consulta e devolve as linhas. */
+export const q = (sql, params = []) => driver.query(sql, params)
+/** Primeira linha (ou undefined). */
+export const one = async (sql, params = []) => (await driver.query(sql, params))[0]
+/** Transação: fn recebe uma função de consulta ligada à transação. */
+export const tx = (fn) => driver.tx(fn)
+
+const NOW = `to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')`
+const TODAY = `to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD')`
+
+const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'leitura' CHECK (role IN ('admin', 'tecnico', 'leitura')),
   phone TEXT NOT NULL DEFAULT '',
@@ -22,31 +68,25 @@ CREATE TABLE IF NOT EXISTS users (
   job_title TEXT NOT NULL DEFAULT '',
   location TEXT NOT NULL DEFAULT '',
   prefs TEXT NOT NULL DEFAULT '{}',
-  password_changed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  password_changed_at TEXT NOT NULL DEFAULT ${NOW},
   last_login_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-  token TEXT PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  expires_at TEXT NOT NULL
+  created_at TEXT NOT NULL DEFAULT ${NOW}
 );
 
 CREATE TABLE IF NOT EXISTS people (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  email TEXT NOT NULL UNIQUE,
   department TEXT NOT NULL,
   job_title TEXT NOT NULL DEFAULT '',
   location TEXT NOT NULL DEFAULT '',
-  since TEXT NOT NULL DEFAULT (date('now')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  since TEXT NOT NULL DEFAULT ${TODAY},
+  created_at TEXT NOT NULL DEFAULT ${NOW}
 );
 
 CREATE TABLE IF NOT EXISTS assets (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  tag TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  id SERIAL PRIMARY KEY,
+  tag TEXT NOT NULL,
   name TEXT NOT NULL,
   serial TEXT NOT NULL DEFAULT '',
   category TEXT NOT NULL CHECK (category IN ('Notebook', 'Desktop', 'Monitor', 'Celular', 'Periférico')),
@@ -55,31 +95,34 @@ CREATE TABLE IF NOT EXISTS assets (
   location TEXT NOT NULL DEFAULT '',
   acquired_at TEXT NOT NULL,
   warranty_until TEXT,
-  value REAL NOT NULL DEFAULT 0,
+  value DOUBLE PRECISION NOT NULL DEFAULT 0,
   notes TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT ${NOW},
+  updated_at TEXT NOT NULL DEFAULT ${NOW}
 );
+CREATE UNIQUE INDEX IF NOT EXISTS assets_tag_key ON assets (lower(tag));
 
 CREATE TABLE IF NOT EXISTS service_orders (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
   detail TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('Preventiva', 'Corretiva', 'Upgrade')),
   status TEXT NOT NULL CHECK (status IN ('Aberta', 'Em andamento', 'Aguardando peça', 'Concluída')),
   tech TEXT NOT NULL DEFAULT '',
-  opened_at TEXT NOT NULL DEFAULT (date('now')),
+  opened_at TEXT NOT NULL DEFAULT ${TODAY},
   due_at TEXT NOT NULL,
   closed_at TEXT,
-  cost REAL NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT ${NOW}
 );
 
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-`)
+`
+
+export { NOW, TODAY }
 
 // ---------------------------------------------------------------------------
 // Dados iniciais (só na primeira execução, com o banco vazio)
@@ -92,22 +135,27 @@ function isoDaysFromNow(days) {
 }
 
 function addYears(iso, years) {
-  const d = new Date(iso + 'T00:00:00')
-  d.setFullYear(d.getFullYear() + years)
+  const d = new Date(iso + 'T00:00:00Z')
+  d.setUTCFullYear(d.getUTCFullYear() + years)
   return d.toISOString().slice(0, 10)
 }
 
-export function seed() {
-  const { n } = db.prepare('SELECT COUNT(*) AS n FROM users').get()
+async function seed(run) {
+  const { n } = (await run('SELECT COUNT(*)::int AS n FROM users'))[0]
   if (n > 0) return
 
-  const adminEmail = process.env.ADMIN_EMAIL || 'admin@grupolegal.com.br'
+  const adminEmail = (process.env.ADMIN_EMAIL || 'admin@grupolegal.com.br').toLowerCase()
   const adminPassword = process.env.ADMIN_PASSWORD || 'admin123'
-  db.prepare(
+  await run(
     `INSERT INTO users (name, email, password_hash, role, phone, department, job_title, location)
-     VALUES (?, ?, ?, 'admin', ?, ?, ?, ?)`,
-  ).run('Davi Gomes', adminEmail, hashPassword(adminPassword), '(11) 98876-5432', 'Tecnologia da Informação', 'Coordenador de TI', 'São Paulo · Matriz')
-  console.log(`[seed] Usuário administrador criado: ${adminEmail} / ${adminPassword}`)
+     VALUES ($1, $2, $3, 'admin', $4, $5, $6, $7)`,
+    ['Davi Gomes', adminEmail, hashPassword(adminPassword), '(11) 98876-5432', 'Tecnologia da Informação', 'Coordenador de TI', 'São Paulo · Matriz'],
+  )
+  console.log(`[seed] Usuário administrador criado: ${adminEmail}${process.env.ADMIN_PASSWORD ? '' : ' / admin123'}`)
+
+  await run(`INSERT INTO settings (key, value) VALUES ('integrations', $1) ON CONFLICT (key) DO NOTHING`, [
+    JSON.stringify({ entra: true, intune: true, workspace: false, smtp: true, teams: false, agent: true }),
+  ])
 
   if (process.env.SEED_DEMO === '0') return
 
@@ -125,11 +173,13 @@ export function seed() {
     ['Lucas Martins', 'TI', 'Técnico de Campo', 'São Paulo · 1º andar', '2022-03-14'],
     ['Renata Duarte', 'Jurídico', 'Advogada Pleno', 'São Paulo · 4º andar', '2024-02-05'],
   ]
-  const insPerson = db.prepare('INSERT INTO people (name, email, department, job_title, location, since) VALUES (?, ?, ?, ?, ?, ?)')
   const personId = {}
   for (const [name, dept, title, loc, since] of people) {
     const email = name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(' ', '.') + '@grupolegal.com.br'
-    personId[name] = insPerson.run(name, email, dept, title, loc, since).lastInsertRowid
+    const r = await run('INSERT INTO people (name, email, department, job_title, location, since) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id', [
+      name, email, dept, title, loc, since,
+    ])
+    personId[name] = r[0].id
   }
 
   // [nome, série, categoria, status, responsável, local, aquisição, anos de garantia, valor]
@@ -161,27 +211,28 @@ export function seed() {
     ['Headset Jabra Evolve2 40', 'SN JB9034', 'Periférico', 'Disponível', null, 'Estoque · Central', '2025-03-30', 2, 899],
     ['iPhone 15', 'IMEI 356781230', 'Celular', 'Em uso', 'Carla Menezes', 'São Paulo · 3º andar', '2025-05-12', 2, 6299],
   ]
-  const insAsset = db.prepare(
-    `INSERT INTO assets (tag, name, serial, category, status, person_id, location, acquired_at, warranty_until, value)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  )
   // Desloca as datas para que a aquisição mais recente fique cerca de um mês atrás
   const shiftDays = Math.max(0, Math.round((Date.now() - Date.parse('2025-09-20')) / 86400000))
   const shift = (iso) => {
-    const d = new Date(iso + 'T00:00:00')
-    d.setDate(d.getDate() + shiftDays)
+    const d = new Date(iso + 'T00:00:00Z')
+    d.setUTCDate(d.getUTCDate() + shiftDays)
     return d.toISOString().slice(0, 10)
   }
   const assetId = []
-  assets.forEach(([name, serial, cat, status, owner, loc, acqRaw, years, value], i) => {
+  for (const [i, [name, serial, cat, status, owner, loc, acqRaw, years, value]] of assets.entries()) {
     const acq = shift(acqRaw)
     const tag = `GL-${String(410 + i).padStart(5, '0')}`
-    assetId.push(insAsset.run(tag, name, serial, cat, status, owner ? personId[owner] : null, loc, acq, addYears(acq, years), value).lastInsertRowid)
-  })
+    const r = await run(
+      `INSERT INTO assets (tag, name, serial, category, status, person_id, location, acquired_at, warranty_until, value)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+      [tag, name, serial, cat, status, owner ? personId[owner] : null, loc, acq, addYears(acq, years), value],
+    )
+    assetId.push(r[0].id)
+  }
 
   // Algumas garantias vencendo nos próximos 30 dias para os alertas
-  db.prepare('UPDATE assets SET warranty_until = ? WHERE id = ?').run(isoDaysFromNow(12), assetId[2])
-  db.prepare('UPDATE assets SET warranty_until = ? WHERE id = ?').run(isoDaysFromNow(25), assetId[12])
+  await run('UPDATE assets SET warranty_until = $1 WHERE id = $2', [isoDaysFromNow(12), assetId[2]])
+  await run('UPDATE assets SET warranty_until = $1 WHERE id = $2', [isoDaysFromNow(25), assetId[12]])
 
   // [índice do ativo, detalhe, tipo, status, técnico, aberta há N dias, prazo em N dias, custo]
   const orders = [
@@ -191,16 +242,29 @@ export function seed() {
     [4, 'Upgrade de RAM 16→32 GB', 'Upgrade', 'Concluída', 'Lucas Martins', -9, -5, 480],
     [6, 'Limpeza e pasta térmica', 'Preventiva', 'Concluída', 'Lucas Martins', -14, -12, 90],
   ]
-  const insOrder = db.prepare(
-    `INSERT INTO service_orders (asset_id, detail, type, status, tech, opened_at, due_at, closed_at, cost)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  )
   for (const [ai, detail, type, status, tech, opened, due, cost] of orders) {
-    insOrder.run(assetId[ai], detail, type, status, tech, isoDaysFromNow(opened), isoDaysFromNow(due), status === 'Concluída' ? isoDaysFromNow(due) : null, cost)
+    await run(
+      `INSERT INTO service_orders (asset_id, detail, type, status, tech, opened_at, due_at, closed_at, cost)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [assetId[ai], detail, type, status, tech, isoDaysFromNow(opened), isoDaysFromNow(due), status === 'Concluída' ? isoDaysFromNow(due) : null, cost],
+    )
   }
+}
 
-  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(
-    'integrations',
-    JSON.stringify({ entra: true, intune: true, workspace: false, smtp: true, teams: false, agent: true }),
-  )
+let ready
+/** Conecta, cria as tabelas e os dados iniciais (uma vez por processo). */
+export function init() {
+  ready ??= (async () => {
+    driver = await connect()
+    await tx(async (run) => {
+      // Evita que duas funções frias criem o banco ao mesmo tempo
+      if (DATABASE_URL) await run('SELECT pg_advisory_xact_lock(724001)')
+      for (const stmt of SCHEMA.split(';').map((s) => s.trim()).filter(Boolean)) await run(stmt)
+      await seed(run)
+    })
+  })().catch((e) => {
+    ready = undefined
+    throw e
+  })
+  return ready
 }

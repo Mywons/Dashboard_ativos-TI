@@ -884,3 +884,10 @@ textarea.input { resize: vertical; font-family: inherit; }
 table.data thead th, table.data tbody td { padding-left: 12px; padding-right: 12px; }
 table.data thead th:first-child, table.data tbody td:first-child { padding-left: 16px; }
 table.data tbody td:last-child { width: 1%; padding-right: 16px; }
+.demo-banner {
+  background: var(--yellow);
+  border-bottom: var(--border);
+  padding: 8px 32px;
+  font-size: 12px;
+}
+@media (max-width: 640px) { .demo-banner { padding: 8px 16px; } }

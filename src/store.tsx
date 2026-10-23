@@ -8,6 +8,8 @@ import type { User } from './data'
 
 interface AuthState {
   user: User | null
+  /** Servidor sem banco persistente (demonstração na Vercel). */
+  demo: boolean
   loading: boolean
   canWrite: boolean
   isAdmin: boolean
@@ -21,9 +23,13 @@ const AuthContext = createContext<AuthState | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+  const [demo, setDemo] = useState(false)
 
   useEffect(() => {
     setUnauthorizedHandler(() => setUser(null))
+    api<{ demo: boolean }>('/health')
+      .then((r) => setDemo(r.demo))
+      .catch(() => {})
     api<{ user: User }>('/auth/me')
       .then((r) => setUser(r.user))
       .catch(() => setUser(null))
@@ -44,6 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider
       value={{
         user,
+        demo,
         loading,
         canWrite: user?.role === 'admin' || user?.role === 'tecnico',
         isAdmin: user?.role === 'admin',

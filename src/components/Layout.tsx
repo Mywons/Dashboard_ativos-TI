@@ -165,11 +165,17 @@ export function Layout({
   setMenuOpen: (v: boolean) => void
   children: ReactNode
 }) {
+  const { demo } = useAuth()
   return (
     <div className="app">
       <Sidebar route={route} onNavigate={onNavigate} onLogout={onLogout} open={menuOpen} />
       <div className="main" onClick={() => menuOpen && setMenuOpen(false)}>
         <Topbar onMenu={() => setMenuOpen(true)} onSearch={onSearch} />
+        {demo && (
+          <div className="demo-banner" role="note">
+            <strong>Modo demonstração:</strong> este servidor ainda não tem banco de dados conectado, então as alterações podem ser apagadas a qualquer momento.
+          </div>
+        )}
         <main className="content">{children}</main>
       </div>
     </div>
