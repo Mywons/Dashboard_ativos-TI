@@ -4,12 +4,15 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n api,web -c blue,green \"node --watch --disable-warning=ExperimentalWarning server/index.js\" \"vite\"",
+    "dev:web": "vite",
+    "dev:api": "node --watch --disable-warning=ExperimentalWarning server/index.js",
     "build": "tsc -b && vite build",
-    "preview": "vite preview",
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
     "typecheck": "tsc -b"
   },
   "dependencies": {
+    "express": "^5.3.0",
     "lucide-react": "^1.48.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
@@ -19,7 +22,11 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.6",
     "typescript": "^7.0.2",
     "vite": "^8.3.1"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

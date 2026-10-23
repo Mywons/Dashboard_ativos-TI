@@ -1,13 +1,18 @@
 import { useState } from 'react'
-import { Activity, ArrowRight, CircleCheck, CircleHelp, Eye, EyeOff, Lock, Mail, Package, ShieldCheck, Wrench } from 'lucide-react'
-import { org } from '../data'
-import { BrandMark } from '../components/Layout'
+import { Activity, ArrowRight, CircleCheck, CircleHelp, Eye, EyeOff, Lock, Mail, Package, ShieldCheck, TriangleAlert, Wrench } from 'lucide-react'
+import { BrandMark, org } from '../components/Layout'
+import { useAuth } from '../store'
 import { Badge, Kpi } from '../components/ui'
 
-export function Login({ onLogin }: { onLogin: () => void }) {
+export function Login() {
+  const { login } = useAuth()
   const [show, setShow] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [remember, setRemember] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [help, setHelp] = useState(false)
 
   return (
     <div className="login">
@@ -63,17 +68,26 @@ export function Login({ onLogin }: { onLogin: () => void }) {
           <span className="eyebrow">Acesso restrito</span>
           <span className="muted">
             Precisa de ajuda?{' '}
-            <button className="btn btn-sm" style={{ marginLeft: 6 }}>
+            <a className="btn btn-sm" style={{ marginLeft: 6 }} href="mailto:suporte.ti@grupolegal.com.br">
               Suporte
-            </button>
+            </a>
           </span>
         </div>
 
         <form
           className="login-form"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault()
-            onLogin()
+            setBusy(true)
+            setError(null)
+            try {
+              await login(email, password, remember)
+              if (!window.location.hash) window.location.hash = '/overview'
+            } catch (err) {
+              setError((err as Error).message)
+            } finally {
+              setBusy(false)
+            }
           }}
         >
           <div>
@@ -91,7 +105,7 @@ export function Login({ onLogin }: { onLogin: () => void }) {
             <label htmlFor="email">Usuário</label>
             <div className="input">
               <Mail size={15} />
-              <input id="email" type="email" placeholder="nome@grupolegal.com.br" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
+              <input id="email" type="email" placeholder="nome@grupolegal.com.br" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" required autoFocus />
             </div>
           </div>
           <div className="field">
@@ -105,6 +119,7 @@ export function Login({ onLogin }: { onLogin: () => void }) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
+                required
               />
               <button type="button" className="icon-ghost" onClick={() => setShow(!show)} aria-label={show ? 'Ocultar senha' : 'Mostrar senha'}>
                 {show ? <EyeOff size={15} /> : <Eye size={15} />}
@@ -113,12 +128,25 @@ export function Login({ onLogin }: { onLogin: () => void }) {
           </div>
           <div className="login-row">
             <label className="check">
-              <input type="checkbox" defaultChecked /> Manter conectado
+              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Manter conectado
             </label>
-            <a href="#">Esqueci minha senha</a>
+            <button type="button" className="link-btn" onClick={() => setHelp(!help)}>
+              Esqueci minha senha
+            </button>
           </div>
-          <button type="submit" className="btn btn-primary btn-block btn-login">
-            Entrar no GL·TI <ArrowRight size={15} />
+          {help && (
+            <div className="login-help" style={{ background: 'var(--lilac-soft)' }}>
+              <CircleHelp size={16} />
+              <span>Por segurança, a senha é redefinida pelo administrador do sistema. Peça a redefinição ao suporte de TI.</span>
+            </div>
+          )}
+          {error && (
+            <div className="form-error" role="alert">
+              <TriangleAlert size={14} /> {error}
+            </div>
+          )}
+          <button type="submit" className="btn btn-primary btn-block btn-login" disabled={busy}>
+            {busy ? 'Entrando…' : 'Entrar no GL·TI'} <ArrowRight size={15} />
           </button>
           <div className="login-help">
             <CircleHelp size={16} />

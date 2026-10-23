@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import {
   Activity,
   Bell,
@@ -16,8 +16,12 @@ import {
   Users,
   Wrench,
 } from 'lucide-react'
-import { currentUser, org } from '../data'
+import { roleLabel } from '../data'
+import { useAuth } from '../store'
+import { useModals } from './Modals'
 import { Avatar } from './ui'
+
+export const org = { name: 'Grupo Legal', unit: 'Tecnologia da Informação' }
 
 export type Route = 'overview' | 'inventory' | 'people' | 'maintenance' | 'reports' | 'integrations' | 'settings'
 
@@ -34,12 +38,12 @@ const systemNav: typeof mainNav = [
 ]
 
 const tips: Partial<Record<Route, string>> = {
-  overview: 'Você tem 14 garantias vencendo este mês. Planeje as renovações.',
-  inventory: 'Use Ctrl+K para buscar qualquer ativo pela etiqueta ou série.',
-  people: 'Vincule responsáveis aos 9 ativos em uso sem dono.',
-  maintenance: 'Registre peças usadas na OS para calcular o custo real.',
-  reports: 'Agende o relatório mensal para receber por e-mail.',
-  settings: 'Ative a autenticação em dois fatores para proteger sua conta.',
+  overview: 'Clique nos alertas para ver quais ativos precisam de atenção.',
+  inventory: 'Use a busca do topo para achar qualquer ativo pela etiqueta ou série.',
+  people: 'Ao excluir uma pessoa, os ativos dela voltam para o estoque.',
+  maintenance: 'Ao abrir uma OS o ativo entra em manutenção; ao concluir, ele volta ao status anterior.',
+  reports: 'Exporte o inventário completo em CSV para abrir no Excel.',
+  settings: 'Troque a senha padrão do administrador no primeiro acesso.',
 }
 
 export function BrandMark({ size = 18 }: { size?: number }) {
@@ -61,6 +65,7 @@ function Sidebar({
   onLogout: () => void
   open: boolean
 }) {
+  const { user } = useAuth()
   const item = (n: (typeof mainNav)[number]) => {
     const Icon = n.icon
     const active = n.id === route
@@ -94,10 +99,10 @@ function Sidebar({
         {tips[route] ?? tips.overview}
       </div>
       <div className="sidebar-user">
-        <Avatar name={currentUser.name} />
+        <Avatar name={user?.name ?? '?'} />
         <div className="who">
-          <strong>{currentUser.name}</strong>
-          <span>{currentUser.access}</span>
+          <strong>{user?.name}</strong>
+          <span>{user ? roleLabel[user.role] : ''}</span>
         </div>
         <button className="icon-ghost" onClick={onLogout} aria-label="Sair">
           <LogOut size={16} />
@@ -107,7 +112,14 @@ function Sidebar({
   )
 }
 
-function Topbar({ onMenu, onNew }: { onMenu: () => void; onNew: () => void }) {
+function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: (q: string) => void }) {
+  const { canWrite } = useAuth()
+  const { openAsset } = useModals()
+  const [q, setQ] = useState('')
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    onSearch(q.trim())
+  }
   const today = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
   return (
     <header className="topbar">
@@ -118,19 +130,20 @@ function Topbar({ onMenu, onNew }: { onMenu: () => void; onNew: () => void }) {
         <span className="eyebrow">{org.name}</span>
         <span className="date">{today}</span>
       </div>
-      <label className="search">
+      <form className="search" onSubmit={submit} role="search">
         <Search size={15} />
-        <input placeholder="Buscar ativo, pessoa ou série…" />
-        <span className="kbd">⌘K</span>
-      </label>
-      <button className="bell" aria-label="Notificações">
+        <input placeholder="Buscar ativo, etiqueta ou série…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Buscar" />
+        <span className="kbd">Enter</span>
+      </form>
+      <a className="bell" href="#/overview" aria-label="Alertas">
         <Bell size={16} />
-        <span className="dot" />
-      </button>
-      <button className="btn btn-primary" onClick={onNew}>
-        <Plus size={15} />
-        <span className="label">Novo ativo</span>
-      </button>
+      </a>
+      {canWrite && (
+        <button className="btn btn-primary" onClick={() => openAsset()}>
+          <Plus size={15} />
+          <span className="label">Novo ativo</span>
+        </button>
+      )}
     </header>
   )
 }
@@ -139,6 +152,7 @@ export function Layout({
   route,
   onNavigate,
   onLogout,
+  onSearch,
   menuOpen,
   setMenuOpen,
   children,
@@ -146,6 +160,7 @@ export function Layout({
   route: Route
   onNavigate: (r: Route) => void
   onLogout: () => void
+  onSearch: (q: string) => void
   menuOpen: boolean
   setMenuOpen: (v: boolean) => void
   children: ReactNode
@@ -154,7 +169,7 @@ export function Layout({
     <div className="app">
       <Sidebar route={route} onNavigate={onNavigate} onLogout={onLogout} open={menuOpen} />
       <div className="main" onClick={() => menuOpen && setMenuOpen(false)}>
-        <Topbar onMenu={() => setMenuOpen(true)} onNew={() => onNavigate('inventory')} />
+        <Topbar onMenu={() => setMenuOpen(true)} onSearch={onSearch} />
         <main className="content">{children}</main>
       </div>
     </div>

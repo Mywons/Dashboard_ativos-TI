@@ -1,18 +1,62 @@
 import { useMemo, useState } from 'react'
-import { ArrowRight, ArrowUpRight, CalendarDays, Clock, Download, Ellipsis, Gauge, Plus, TriangleAlert, Wrench, CircleCheck } from 'lucide-react'
-import { serviceOrders, statusBadge, upcomingMaintenance } from '../data'
-import { AlertList, Badge, Chips, Kpi, Meter, PageHead, Pager, Person } from '../components/ui'
+import { ArrowUpRight, CircleCheck, Clock, Gauge, Plus, TriangleAlert, Wrench } from 'lucide-react'
+import { api } from '../api'
+import { daysUntil, fmtDate, fmtMoney, fmtPct, ORDER_STATUS, statusBadge, type OrderStatus, type ServiceOrder, type Stats } from '../data'
+import { useAuth, useData, useResource } from '../store'
+import { useModals } from '../components/Modals'
+import { AlertList, Badge, Chips, Kpi, Meter, PageHead, Pager, paginate, Person, RowActions, TableMessage, type AlertItem } from '../components/ui'
 
-const tabs = ['Todas', 'Aberta', 'Em andamento', 'Aguardando peça', 'Concluída'] as const
+const tabs = ['Todas', ...ORDER_STATUS] as const
+const PAGE_SIZE = 10
+
+/** Próximo status no fluxo de atendimento. */
+const nextStatus: Partial<Record<OrderStatus, OrderStatus>> = {
+  Aberta: 'Em andamento',
+  'Em andamento': 'Concluída',
+  'Aguardando peça': 'Em andamento',
+}
 
 export function Maintenance() {
+  const { canWrite } = useAuth()
+  const { openOrder, confirm } = useModals()
+  const { mutate, toast } = useData()
+  const { data: orders, error } = useResource<ServiceOrder[]>('/orders')
+  const { data: stats } = useResource<Stats>('/stats')
   const [tab, setTab] = useState<(typeof tabs)[number]>('Todas')
+  const [page, setPage] = useState(1)
+
   const counts = useMemo(() => {
-    const c: Partial<Record<(typeof tabs)[number], number>> = { Todas: serviceOrders.length }
-    for (const o of serviceOrders) c[o.status] = (c[o.status] ?? 0) + 1
+    const c: Partial<Record<(typeof tabs)[number], number>> = { Todas: orders?.length ?? 0 }
+    for (const o of orders ?? []) c[o.status] = (c[o.status] ?? 0) + 1
     return c
-  }, [])
-  const rows = tab === 'Todas' ? serviceOrders : serviceOrders.filter((o) => o.status === tab)
+  }, [orders])
+
+  const filtered = (orders ?? []).filter((o) => tab === 'Todas' || o.status === tab)
+  const { pages, current, rows } = paginate(filtered, page, PAGE_SIZE)
+  const open = (orders ?? []).filter((o) => o.status !== 'Concluída')
+  const upcoming = [...open].sort((a, b) => a.dueAt.localeCompare(b.dueAt)).slice(0, 4)
+  const m = stats?.maintenance
+
+  const alerts: AlertItem[] = []
+  if (stats?.alerts.lateOrders) alerts.push({ tone: 'yellow', icon: 'clock', title: 'OS atrasadas', detail: `${stats.alerts.lateOrders} ordem(ns) passaram do prazo` })
+  if (stats?.alerts.waitingParts) alerts.push({ tone: 'salmon', icon: 'box', title: 'Peças pendentes', detail: `${stats.alerts.waitingParts} ordem(ns) aguardando peça` })
+  if (stats?.alerts.warrantyExpiring90)
+    alerts.push({ tone: 'lilac', icon: 'shield', title: 'Garantias a vencer', detail: `${stats.alerts.warrantyExpiring90} ativo(s) em 90 dias` })
+
+  const advance = (o: ServiceOrder, status: OrderStatus) =>
+    mutate(() => api(`/orders/${o.id}`, { method: 'PUT', body: { ...o, status } }), `${o.code}: ${status}`).catch((e: Error) => toast(e.message, 'error'))
+
+  const remove = (o: ServiceOrder) =>
+    confirm({
+      title: 'Excluir ordem de serviço',
+      message: (
+        <>
+          Excluir <b>{o.code}</b> ({o.assetName})? Se for a última OS aberta do ativo, ele sai do status Manutenção.
+        </>
+      ),
+      success: `${o.code} excluída`,
+      action: () => api(`/orders/${o.id}`, { method: 'DELETE' }),
+    })
 
   return (
     <>
@@ -20,74 +64,94 @@ export function Maintenance() {
         eyebrow="Central de manutenção"
         title="Manutenção em dia, parque em movimento."
         actions={
-          <>
-            <button className="btn">
-              <CalendarDays size={14} /> Todo o período
+          canWrite && (
+            <button className="btn btn-primary" onClick={() => openOrder()}>
+              <Plus size={14} /> Nova OS
             </button>
-            <button className="btn">
-              <Download size={14} /> Exportar
-            </button>
-          </>
+          )
         }
       />
 
       <section className="kpis">
-        <Kpi tone="salmon" label="Em manutenção" value="57" delta="12 aguardando peça" icon={<Wrench size={14} />} />
-        <Kpi tone="lime" label="Concluídas no mês" value="34" delta="↑ 18% vs. agosto" icon={<CircleCheck size={14} />} />
-        <Kpi tone="blue" label="Tempo médio de reparo" value="18h" delta="Meta: 24h" icon={<Clock size={14} />} trend={[9, 8, 7, 7, 6, 5, 5, 4]} />
-        <Kpi tone="lilac" label="SLA cumprido" value="92%" delta="↑ 3 p.p." icon={<Gauge size={14} />} />
+        <Kpi tone="salmon" label="Em manutenção" value={stats ? String(stats.byStatus['Manutenção']) : '—'} delta={m ? `${m.byStatus['Aguardando peça']} aguardando peça` : ''} icon={<Wrench size={14} />} />
+        <Kpi tone="lime" label="Concluídas no mês" value={m ? String(m.closedThisMonth) : '—'} delta={m ? `${fmtMoney(m.cost)} em custos (total)` : ''} icon={<CircleCheck size={14} />} />
+        <Kpi
+          tone="blue"
+          label="Tempo médio de reparo"
+          value={m ? `${m.avgRepairDays.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} d` : '—'}
+          delta="Da abertura à conclusão"
+          icon={<Clock size={14} />}
+          trend={[9, 8, 7, 7, 6, 5, 5, 4]}
+        />
+        <Kpi tone="lilac" label="SLA cumprido" value={m ? fmtPct(m.sla) : '—'} delta="OS concluídas no prazo" icon={<Gauge size={14} />} />
       </section>
 
       <section className="grid-3">
         <div className="card">
           <div className="card-head">
             <div>
-              <span className="eyebrow">Agenda preventiva</span>
-              <h3>Próximas manutenções</h3>
+              <span className="eyebrow">Agenda</span>
+              <h3>Próximos prazos</h3>
             </div>
-            <button className="btn btn-sm">Esta semana</button>
           </div>
-          <ul className="agenda">
-            {upcomingMaintenance.map((m) => (
-              <li key={m.title}>
-                <span className="date-chip" style={{ background: `var(--${m.tone || 'cyan'}-soft)` }}>
-                  <b>{m.day}</b>
-                  {m.month}
-                </span>
-                <div className="what">
-                  <strong>{m.title}</strong>
-                  <span>{m.detail}</span>
-                </div>
-                <span className="when">{m.when}</span>
-              </li>
-            ))}
-          </ul>
+          {upcoming.length === 0 ? (
+            <p className="muted small">Nenhuma ordem em aberto.</p>
+          ) : (
+            <ul className="agenda">
+              {upcoming.map((o) => {
+                const d = daysUntil(o.dueAt)
+                const [, mo, day] = o.dueAt.split('-')
+                return (
+                  <li key={o.id}>
+                    <span className="date-chip" style={{ background: o.late ? 'var(--salmon-soft)' : 'var(--cyan-soft)' }}>
+                      <b>{day}</b>
+                      {fmtDate(`2000-${mo}-01`, false).slice(3)}
+                    </span>
+                    <div className="what">
+                      <strong>{o.assetName}</strong>
+                      <span>
+                        {o.code} · {o.detail}
+                      </span>
+                    </div>
+                    <span className="when" style={o.late ? { color: 'var(--red)' } : undefined}>
+                      {d < 0 ? `${-d}d atrasada` : d === 0 ? 'Hoje' : `em ${d}d`}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
         </div>
 
         <div className="card card-lime">
           <div className="card-head">
             <div>
               <span className="eyebrow">Ordens abertas</span>
-              <h3>Fluxo das 57 manutenções</h3>
+              <h3>Fluxo das {m?.open ?? 0} manutenções</h3>
             </div>
             <span className="round-icon dark">
               <Wrench size={14} />
             </span>
           </div>
-          <div className="meters">
-            <Meter label="Triagem" value={9} max={57} color="var(--ink)" />
-            <Meter label="Em execução" value={22} max={57} color="var(--blue)" />
-            <Meter label="Aguardando peça" value={12} max={57} color="var(--red)" />
-            <Meter label="Pronto p/ entrega" value={14} max={57} color="#7a9400" />
-          </div>
-          <div className="callout-dark bottom">
-            <span className="score">92%</span>
-            <div>
-              <strong>SLA sob controle</strong>
-              <span>Só 2 ordens fora do prazo esta semana</span>
-            </div>
-            <ArrowUpRight size={18} className="trail" />
-          </div>
+          {m && (
+            <>
+              <div className="meters">
+                <Meter label="Abertas (triagem)" value={m.byStatus['Aberta']} max={m.open || 1} color="var(--ink)" />
+                <Meter label="Em andamento" value={m.byStatus['Em andamento']} max={m.open || 1} color="var(--blue)" />
+                <Meter label="Aguardando peça" value={m.byStatus['Aguardando peça']} max={m.open || 1} color="var(--red)" />
+              </div>
+              <div className="callout-dark bottom">
+                <span className="score" style={{ fontSize: 12 }}>
+                  {fmtPct(m.sla)}
+                </span>
+                <div>
+                  <strong>{stats.alerts.lateOrders ? 'Atenção ao SLA' : 'SLA sob controle'}</strong>
+                  <span>{stats.alerts.lateOrders ? `${stats.alerts.lateOrders} ordem(ns) fora do prazo` : 'Nenhuma ordem atrasada'}</span>
+                </div>
+                <ArrowUpRight size={18} className="trail" />
+              </div>
+            </>
+          )}
         </div>
 
         <div className="card">
@@ -102,16 +166,7 @@ export function Maintenance() {
               <TriangleAlert size={14} />
             </span>
           </div>
-          <AlertList
-            items={[
-              { tone: 'yellow', title: 'OS atrasadas', detail: '2 ordens passaram do SLA', icon: 'shield' },
-              { tone: 'salmon', title: 'Peças pendentes', detail: '12 ordens aguardando fornecedor', icon: 'box' },
-              { tone: 'lilac', title: 'Reincidência', detail: '3 ativos com 3+ reparos no ano', icon: 'user' },
-            ]}
-          />
-          <button className="btn btn-primary btn-block" style={{ marginTop: 14 }}>
-            Ver todos <ArrowRight size={14} />
-          </button>
+          {alerts.length ? <AlertList items={alerts} /> : <p className="muted small">Nada pendente. 🎉</p>}
         </div>
       </section>
 
@@ -121,17 +176,17 @@ export function Maintenance() {
             <span className="eyebrow">Operação técnica</span>
             <h2>Ordens de serviço</h2>
           </div>
-          <div className="page-actions">
-            <button className="btn btn-sm">
-              <Download size={13} /> Exportar
-            </button>
-            <button className="btn btn-sm btn-dark">
-              <Plus size={13} /> Nova OS
-            </button>
-          </div>
         </div>
         <div className="filterbar plain">
-          <Chips options={tabs} value={tab} onChange={setTab} counts={counts} />
+          <Chips
+            options={tabs}
+            value={tab}
+            onChange={(v) => {
+              setTab(v)
+              setPage(1)
+            }}
+            counts={counts}
+          />
         </div>
         <div className="card table-card">
           <div className="table-scroll">
@@ -145,47 +200,72 @@ export function Maintenance() {
                   <th>Técnico</th>
                   <th>Abertura</th>
                   <th>Prazo</th>
+                  <th>Custo</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
-                {rows.map((o) => (
-                  <tr key={o.id} className={o.late ? 'hl' : ''}>
-                    <td className="link-code">{o.id}</td>
-                    <td>
-                      <div className="cell-main">
-                        <div>
-                          <strong>{o.asset}</strong>
-                          <small>{o.detail}</small>
+                {error && <TableMessage cols={9}>{error}</TableMessage>}
+                {!orders && !error && <TableMessage cols={9}>Carregando…</TableMessage>}
+                {orders && rows.length === 0 && <TableMessage cols={9}>Nenhuma ordem de serviço.</TableMessage>}
+                {rows.map((o) => {
+                  const next = nextStatus[o.status]
+                  return (
+                    <tr key={o.id} className={o.late ? 'hl' : ''}>
+                      <td className="link-code">{o.code}</td>
+                      <td>
+                        <div className="cell-main">
+                          <div>
+                            <strong>{o.assetName}</strong>
+                            <small>
+                              {o.assetTag} · {o.detail}
+                            </small>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td>{o.type}</td>
-                    <td>
-                      <Badge className={statusBadge[o.status]}>{o.status}</Badge>
-                    </td>
-                    <td>
-                      <Person name={o.tech} />
-                    </td>
-                    <td className="muted">{o.opened}</td>
-                    <td style={o.late ? { color: 'var(--red)', fontWeight: 600 } : undefined} className={o.late ? '' : 'muted'}>
-                      {o.sla}
-                      {o.late && ' · atrasada'}
-                    </td>
-                    <td className="row-menu">
-                      <Ellipsis size={16} />
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td>{o.type}</td>
+                      <td>
+                        <Badge className={statusBadge[o.status]}>{o.status}</Badge>
+                      </td>
+                      <td>
+                        <Person name={o.tech || null} />
+                      </td>
+                      <td className="muted">{fmtDate(o.openedAt)}</td>
+                      <td style={o.late ? { color: 'var(--red)', fontWeight: 600 } : undefined} className={o.late ? '' : 'muted'}>
+                        {fmtDate(o.dueAt)}
+                        {o.late && ' · atrasada'}
+                      </td>
+                      <td className="muted num">{o.cost ? fmtMoney(o.cost) : '—'}</td>
+                      <td>
+                        {canWrite && (
+                          <RowActions
+                            extra={
+                              next && (
+                                <button className="btn btn-sm" onClick={() => advance(o, next)} title={`Mover para ${next}`}>
+                                  {next === 'Concluída' ? 'Concluir' : next === 'Em andamento' && o.status === 'Aberta' ? 'Iniciar' : 'Retomar'}
+                                </button>
+                              )
+                            }
+                            onEdit={() => openOrder(o)}
+                            onDelete={() => remove(o)}
+                          />
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
           <div className="table-foot">
-            <span>{rows.length} ordens de serviço</span>
-            <Pager page={1} pages={1} onChange={() => {}} />
+            <span>
+              {filtered.length} ordem(ns) de serviço · {open.length} em aberto
+            </span>
+            <Pager page={current} pages={pages} onChange={setPage} />
           </div>
         </div>
       </section>
     </>
   )
 }
+

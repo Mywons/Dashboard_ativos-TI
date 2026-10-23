@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Layout, type Route } from './components/Layout'
+import { ModalsProvider } from './components/Modals'
+import { AuthProvider, DataProvider, useAuth } from './store'
 import { Login } from './pages/Login'
 import { Overview } from './pages/Overview'
 import { Inventory } from './pages/Inventory'
@@ -11,20 +13,23 @@ import { Settings } from './pages/Settings'
 
 const routes: Route[] = ['overview', 'inventory', 'people', 'maintenance', 'reports', 'integrations', 'settings']
 
-/** Roteamento simples por hash: #/login, #/overview, #/inventory… */
-function readHash(): Route | 'login' {
-  const h = window.location.hash.replace(/^#\/?/, '')
-  if (h === 'login') return 'login'
-  return (routes as string[]).includes(h) ? (h as Route) : 'overview'
+/** Roteamento simples por hash: #/overview, #/inventory?q=dell… */
+function readHash(): { route: Route; params: URLSearchParams } {
+  const [path, query = ''] = window.location.hash.replace(/^#\/?/, '').split('?')
+  return {
+    route: (routes as string[]).includes(path) ? (path as Route) : 'overview',
+    params: new URLSearchParams(query),
+  }
 }
 
-export default function App() {
-  const [route, setRoute] = useState(readHash)
+function Shell() {
+  const { user, loading, logout } = useAuth()
+  const [{ route, params }, setLoc] = useState(readHash)
   const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
     const onHash = () => {
-      setRoute(readHash())
+      setLoc(readHash())
       setMenuOpen(false)
       window.scrollTo(0, 0)
     }
@@ -32,21 +37,45 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  const go = (r: Route | 'login') => {
-    window.location.hash = `/${r}`
+  const go = (r: Route, query?: Record<string, string>) => {
+    const qs = query ? new URLSearchParams(query).toString() : ''
+    window.location.hash = `/${r}${qs ? `?${qs}` : ''}`
   }
 
-  if (route === 'login') return <Login onLogin={() => go('overview')} />
+  if (loading) return <div className="boot">Carregando…</div>
+  if (!user) return <Login />
 
   return (
-    <Layout route={route} onNavigate={go} onLogout={() => go('login')} menuOpen={menuOpen} setMenuOpen={setMenuOpen}>
-      {route === 'overview' && <Overview onNavigate={go} />}
-      {route === 'inventory' && <Inventory />}
-      {route === 'people' && <People />}
-      {route === 'maintenance' && <Maintenance />}
-      {route === 'reports' && <Reports />}
-      {route === 'integrations' && <Integrations />}
-      {route === 'settings' && <Settings />}
-    </Layout>
+    <ModalsProvider>
+      <Layout
+        route={route}
+        onNavigate={(r) => go(r)}
+        onLogout={() => {
+          window.location.hash = '/overview'
+          logout()
+        }}
+        onSearch={(q) => go('inventory', q ? { q } : undefined)}
+        menuOpen={menuOpen}
+        setMenuOpen={setMenuOpen}
+      >
+        {route === 'overview' && <Overview onNavigate={go} />}
+        {route === 'inventory' && <Inventory key={params.toString()} params={params} />}
+        {route === 'people' && <People />}
+        {route === 'maintenance' && <Maintenance />}
+        {route === 'reports' && <Reports />}
+        {route === 'integrations' && <Integrations />}
+        {route === 'settings' && <Settings />}
+      </Layout>
+    </ModalsProvider>
+  )
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <DataProvider>
+        <Shell />
+      </DataProvider>
+    </AuthProvider>
   )
 }

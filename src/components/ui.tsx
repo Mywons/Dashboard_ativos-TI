@@ -1,6 +1,12 @@
 import type { ReactNode } from 'react'
-import { Box, ChevronLeft, ChevronRight, ShieldAlert, UserX } from 'lucide-react'
-import { alerts as defaultAlerts, type AlertItem } from '../data'
+import { Box, ChevronLeft, ChevronRight, Clock, Pencil, ShieldAlert, Trash2, UserX } from 'lucide-react'
+
+export interface AlertItem {
+  tone: 'yellow' | 'salmon' | 'lilac'
+  title: string
+  detail: string
+  icon: 'shield' | 'user' | 'box' | 'clock'
+}
 
 export type Tone = 'blue' | 'lime' | 'salmon' | 'lilac'
 
@@ -97,9 +103,9 @@ export function Meter({ label, value, max, color }: { label: string; value: numb
   )
 }
 
-const alertIcons = { shield: ShieldAlert, user: UserX, box: Box }
+const alertIcons = { shield: ShieldAlert, user: UserX, box: Box, clock: Clock }
 
-export function AlertList({ items = defaultAlerts }: { items?: AlertItem[] }) {
+export function AlertList({ items }: { items: AlertItem[] }) {
   return (
     <div className="alerts">
       {items.map((a) => {
@@ -126,7 +132,9 @@ export function Pager({ page, pages, onChange }: { page: number; pages: number; 
       <button className="btn btn-sm" disabled={page <= 1} onClick={() => onChange(page - 1)}>
         <ChevronLeft size={14} /> Anterior
       </button>
-      {Array.from({ length: pages }, (_, i) => i + 1).map((p) => (
+      {Array.from({ length: pages }, (_, i) => i + 1)
+        .filter((p) => pages <= 7 || p === 1 || p === pages || Math.abs(p - page) <= 1)
+        .map((p) => (
         <button key={p} className={`pg ${p === page ? 'active' : ''}`} onClick={() => onChange(p)}>
           {p}
         </button>
@@ -184,4 +192,39 @@ export function PageHead({ eyebrow, title, actions }: { eyebrow: string; title: 
       {actions && <div className="page-actions">{actions}</div>}
     </div>
   )
+}
+
+export function RowActions({ onEdit, onDelete, extra }: { onEdit?: () => void; onDelete?: () => void; extra?: ReactNode }) {
+  return (
+    <div className="row-actions">
+      {extra}
+      {onEdit && (
+        <button className="icon-btn" onClick={onEdit} aria-label="Editar" title="Editar">
+          <Pencil size={14} />
+        </button>
+      )}
+      {onDelete && (
+        <button className="icon-btn danger" onClick={onDelete} aria-label="Excluir" title="Excluir">
+          <Trash2 size={14} />
+        </button>
+      )}
+    </div>
+  )
+}
+
+export function TableMessage({ cols, children }: { cols: number; children: ReactNode }) {
+  return (
+    <tr>
+      <td colSpan={cols} className="muted" style={{ textAlign: 'center', padding: 32 }}>
+        {children}
+      </td>
+    </tr>
+  )
+}
+
+/** Paginação local de uma lista já filtrada. */
+export function paginate<T>(items: T[], page: number, size: number) {
+  const pages = Math.max(1, Math.ceil(items.length / size))
+  const current = Math.min(page, pages)
+  return { pages, current, rows: items.slice((current - 1) * size, current * size) }
 }
