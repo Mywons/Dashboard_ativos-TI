@@ -4,7 +4,7 @@ Sistema de gestão de ativos de TI (inventário, pessoas, manutenções e relat�
 
 ## Rodando
 
-Requer **Node.js 22.13 ou mais recente** (o banco usa o SQLite embutido no Node, sem instalar nada extra).
+Requer **Node.js 20 ou mais recente**. Localmente o banco é um Postgres embutido (PGlite) gravado em `data/pglite`, sem instalar nada extra.
 
 ```bash
 npm install
@@ -20,7 +20,7 @@ npm start          # http://localhost:3001
 
 ### Primeiro acesso
 
-Na primeira execução o banco é criado em `data/ativos.db` com dados de exemplo e um administrador:
+Na primeira execução o banco é criado com dados de exemplo e um administrador:
 
 - **E-mail:** `admin@grupolegal.com.br`
 - **Senha:** `admin123`
@@ -32,7 +32,9 @@ Troque a senha em **Configurações → Segurança da conta** logo no primeiro a
 | Variável | Padrão | Uso |
 |---|---|---|
 | `PORT` | `3001` | Porta do servidor |
-| `DB_PATH` | `data/ativos.db` | Arquivo do banco SQLite |
+| `DATABASE_URL` (ou `POSTGRES_URL`) | — | Postgres externo (ex.: Neon). Sem ela, usa o PGlite |
+| `PGLITE_DIR` | `data/pglite` | Pasta do banco local (PGlite) |
+| `SESSION_SECRET` | gerada e salva no banco | Chave que assina o cookie de sessão |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin@grupolegal.com.br` / `admin123` | Administrador criado na primeira execução |
 | `SEED_DEMO` | `1` | Use `0` para começar sem os ativos/pessoas de exemplo |
 | `COOKIE_SECURE` | — | Use `1` atrás de HTTPS para marcar o cookie de sessão como `Secure` |
@@ -41,7 +43,7 @@ Para zerar o sistema, pare o servidor e apague a pasta `data/`.
 
 ## Funcionalidades
 
-- **Login** com sessão em cookie HttpOnly, senha com hash (scrypt), "manter conectado" e bloqueio após 5 tentativas erradas em 15 minutos.
+- **Login** com sessão em cookie HttpOnly assinado, senha com hash (scrypt), "manter conectado" e bloqueio após 5 tentativas erradas em 15 minutos.
 - **Perfis de acesso:** Administrador (tudo), Técnico (opera inventário, pessoas e manutenções) e Somente leitura. As permissões são validadas no servidor.
 - **Inventário:** cadastrar, editar e excluir ativos, com busca, filtros por categoria/status, paginação e exportação CSV. A etiqueta (GL-00001…) é gerada automaticamente.
 - **Pessoas:** cadastrar, editar e excluir colaboradores. Ao atribuir um responsável o ativo passa para "Em uso"; ao excluir a pessoa, os ativos dela voltam ao estoque.
@@ -53,10 +55,12 @@ Para zerar o sistema, pare o servidor e apague a pasta `data/`.
 ## Estrutura
 
 ```
-server/            API (Express + SQLite embutido no Node)
-  index.js         rotas: /api/auth, /api/assets, /api/people, /api/orders, /api/users, /api/stats…
-  db.js            esquema do banco e dados iniciais
-  auth.js          hash de senha, cookies e limite de tentativas
+api/index.js       função serverless da Vercel (reaproveita server/app.js)
+server/
+  app.js           API Express: /api/auth, /api/assets, /api/people, /api/orders, /api/users, /api/stats…
+  db.js            conexão Postgres/PGlite, esquema e dados iniciais
+  auth.js          hash de senha, cookie de sessão assinado e limite de tentativas
+  index.js         servidor local / produção em servidor próprio
 src/
   api.ts           cliente HTTP
   store.tsx        sessão, recarga de dados e avisos (toasts)
@@ -65,6 +69,15 @@ src/
   pages/           uma página por tela do Figma
 ```
 
-## Hospedagem
+## Hospedagem na Vercel
 
-O servidor guarda os dados num arquivo SQLite, então precisa de um host com processo Node contínuo e disco persistente (VPS, Render, Railway, Fly.io ou um servidor interno). Plataformas serverless como a Vercel não mantêm esse arquivo entre requisições.
+O projeto já vem pronto para a Vercel: o front é publicado como site estático e a API roda como função serverless (`api/index.js` + `vercel.json`).
+
+1. Importe o repositório na Vercel (framework **Vite**, comando `npm run build`, saída `dist`).
+2. Em **Storage**, crie um banco **Neon (Postgres)** e conecte ao projeto. A Vercel cria a variável `POSTGRES_URL`/`DATABASE_URL` automaticamente.
+3. Defina `SESSION_SECRET` (texto aleatório longo) e `ADMIN_PASSWORD` (senha inicial do administrador).
+4. Faça um novo deploy. Na primeira requisição as tabelas e os dados iniciais são criados.
+
+Sem banco conectado o sistema funciona em **modo demonstração** (Postgres em memória): aparece um aviso amarelo e os dados se perdem quando a função reinicia.
+
+Também roda em qualquer servidor Node (`npm run build && npm start`), com ou sem `DATABASE_URL`.
